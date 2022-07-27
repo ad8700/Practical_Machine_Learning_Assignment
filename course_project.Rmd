@@ -1,0 +1,140 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Andy Domenico"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+#Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+Data 
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+#What you should submit
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+#Peer Review Portion
+Your submission for the Peer Review portion should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+
+#Course Project Prediction Quiz Portion
+Apply your machine learning algorithm to the 20 test cases available in the test data above and submit your predictions in appropriate format to the Course Project Prediction Quiz for automated grading. 
+
+#Reproducibility 
+Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis. 
+
+
+```{r}
+#Import libraries
+library(caret)
+library(randomForest)
+library(corrplot)
+library(ggplot2)
+library(readr)
+library(tidyverse)
+```
+
+```{r}
+#If data directory does not exist, create it
+
+if(!dir.exists("./data")) {
+  dir.create("./data")
+} else {
+  print("Data directory already exists")
+}
+
+#download the data to the data directory
+trainFileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+trainDest <- "./data/train.csv"
+download.file(trainFileUrl, trainDest)
+testFileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testDest <- "./data/test.csv"
+download.file(testFileUrl, testDest)
+```
+
+```{r}
+#create data frames for train and test
+train <- read_csv(trainDest)
+test <- read_csv(testDest)
+```
+
+With a data set of this number of predictors, we will want to eliminate as many correlated predictors as possible.  Once we reduce the number of predictors to an independent set, we can apply Principal Component Analysis (PCA) to understand the key predictors that explain as much of the variance as possible and then subjecting those to modeling 
+
+#Preprocessing
+
+Now we will create a validation set from within the training data.  The test data frame will be left alone and used only for the final predictions
+
+```{r}
+inTrain <- createDataPartition(y=train$classe,
+                               p=0.7, list=FALSE)
+training <- train[inTrain,]
+validation <- train[-inTrain,]
+```
+
+
+```{r}
+## Removing metadata columns that we will not use in the analysis
+training <- training %>% select(-(1:7))
+test <- test %>% select(-(1:7))
+validation <- validation %>% select(-(1:7))
+
+
+## Removing variable with a Near Zero Variance [NZV]
+NZV <- nearZeroVar(training)
+training <- training %>% select(-all_of(NZV))
+test <- test %>% select(-all_of(NZV))
+validation <- validation %>% select(-all_of(NZV))
+
+## Removing columns that are more than 90% composed of NA's
+keepCols <- colMeans(is.na(training)) < 0.9
+
+training <- training[,keepCols]
+test <- test[,keepCols]
+validation <- validation[,keepCols]
+```
+
+We now have 3 dataframes:  One for training, one to validate the results of training and one that we will only use to submit the final answers (test).  The dataframes each have the same 37 variables, but differing numbers of rows, which is expected.  
+
+Now we will see if there is a way to further reduce the number of variables using Principal Components Analysis (PCA) during the pre-processing phase of training.  We are training a Random Forest model (method="rf") and adding 5 fold cross validation in the trainControl function (trainControl="cv")
+
+```{r}
+rfFit <- train(classe~., training, method = "rf", preProcess=c("pca"),
+               trControl = trainControl(method = "cv"), 
+               number=5, 
+               savePredictions='final')
+rfFit$finalModel
+```
+
+##Cross validation
+Here is where an assumption comes into play: We are assuming that the data from the training, validation and test sets comes from the same distribution. If they are not from the same distribution, then we may be overfitting the model. 
+
+When we passed the preProcess argument value of "pca" to the train function above, the the preProcessing is applied to each resampling iteration.  Hence, we achieve cross-validation in the trainControl function during training.
+
+##Expected out of sample error
+Now we will run the model on the validation set and get an expected out of sample error.  I expect it to be slightly above the training set OOB estimate of  error rate: 4.86%.  If this is good enough, then we can use the test set to make final predictions
+
+```{r}
+validation_res <- predict(rfFit, validation)
+confusionMatrix(validation_res, as.factor(validation$classe))
+```
+
+We see similar outcomes in the error, accuracy is 95.31%.  The model is predicting mostly correct, with some misclassifications.  It is not overfitting on the training set.
+
+##Test set predictions
+Now we can make predictions on the test set.  Since the test set does not have a 'classe' variable, we predict row by row what the 'classe' variable would be
+```{r}
+test_pred <- predict(rfFit, test)
+test_pred
+```
+
+
