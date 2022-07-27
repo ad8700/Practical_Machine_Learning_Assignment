@@ -134,7 +134,7 @@ We see similar outcomes in the error, accuracy is 95.31%.  The model is predicti
 Now we can make predictions on the test set.  Since the test set does not have a 'classe' variable, we predict row by row what the 'classe' variable would be
 ```{r}
 test_pred <- predict(rfFit, test)
-test_pred
+test_pred 
 ```
 
 
